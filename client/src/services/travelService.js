@@ -296,13 +296,26 @@ export function searchHotels(destination, checkInDate, checkOutDate, adults = 1,
                             property.accuratePropertyClass || 
                             'N/A';
 
+          // Format hotel name for Booking.com URL
+          function formatHotelNameForUrl(name) {
+            return name
+              .toLowerCase()
+              .replace(/[^a-z0-9 ]/g, '') // Remove special characters
+              .replace(/\s+/g, '-');      // Replace spaces with hyphens
+          }
+
+          const formattedHotelName = formatHotelNameForUrl(hotelName);
+          const countryCode = property.countryCode?.toLowerCase() || 'us';
+
+          const bookingUrl = `https://www.booking.com/hotel/${countryCode}/${formattedHotelName}.html?checkin=${checkInDate}&checkout=${checkOutDate}&group_adults=${adults}&group_children=${children}&no_rooms=${rooms}`;
+
           const processedHotel = {
             hotel_name: hotelName,
             address: address,
             review_score: rating,
             price: price,
             photo_url: photoUrl,
-            url: `https://www.booking.com/hotel/us/${property.id}.html`,
+            url: property.url || bookingUrl,
             amenities: amenities,
             description: description,
             star_rating: starRating,
