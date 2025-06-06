@@ -5,110 +5,125 @@ import config from '../config';
 const BOOKING_API_BASE_URL = 'https://booking-com15.p.rapidapi.com/api/v1';
 
 // Search for flights
-export function searchFlights(fromCity, toCity, departureDate, returnDate, adults = 1) {
-  return async function() {
-    try {
-      // First, get the destination IDs for both cities
-      const fromSearchOptions = {
-        method: 'GET',
-        url: `${BOOKING_API_BASE_URL}/flights/searchDestination`,
-        params: {
-          query: fromCity
-        },
-        headers: {
-          'x-rapidapi-key': config.BOOKING_API_KEY,
-          'x-rapidapi-host': 'booking-com15.p.rapidapi.com'
-        }
-      };
+export async function getDestinationIds(fromCity, toCity) {
+  console.log('Getting destination IDs for:', { fromCity, toCity });
 
-      const toSearchOptions = {
-        method: 'GET',
-        url: `${BOOKING_API_BASE_URL}/flights/searchDestination`,
-        params: {
-          query: toCity
-        },
-        headers: {
-          'x-rapidapi-key': config.BOOKING_API_KEY,
-          'x-rapidapi-host': 'booking-com15.p.rapidapi.com'
-        }
-      };
-
-      console.log('Searching for flight destinations:', { fromCity, toCity });
-      
-      const [fromResponse, toResponse] = await Promise.all([
-        axios.request(fromSearchOptions),
-        axios.request(toSearchOptions)
-      ]);
-
-      console.log('Destination search responses:', {
-        from: fromResponse.data,
-        to: toResponse.data
-      });
-
-      if (!fromResponse.data?.data || fromResponse.data.data.length === 0) {
-        throw new Error(`No destinations found for ${fromCity}`);
+  try {
+    const fromSearchOptions = {
+      method: 'GET',
+      url: `${BOOKING_API_BASE_URL}/flights/searchDestination`,
+      params: {
+        query: fromCity
+      },
+      headers: {
+        'x-rapidapi-key': config.BOOKING_API_KEY,
+        'x-rapidapi-host': 'booking-com15.p.rapidapi.com'
       }
+    };
 
-      if (!toResponse.data?.data || toResponse.data.data.length === 0) {
-        throw new Error(`No destinations found for ${toCity}`);
+    const toSearchOptions = {
+      method: 'GET',
+      url: `${BOOKING_API_BASE_URL}/flights/searchDestination`,
+      params: {
+        query: toCity
+      },
+      headers: {
+        'x-rapidapi-key': config.BOOKING_API_KEY,
+        'x-rapidapi-host': 'booking-com15.p.rapidapi.com'
       }
+    };
 
-      const fromDest = fromResponse.data.data[0];
-      const toDest = toResponse.data.data[0];
+    console.log('Searching for flight destinations:', { fromCity, toCity });
+    
+    const [fromResponse, toResponse] = await Promise.all([
+      axios.request(fromSearchOptions),
+      axios.request(toSearchOptions)
+    ]);
 
-      console.log('Found destinations:', {
-        from: fromDest,
-        to: toDest
-      });
+    console.log('Destination search responses:', {
+      from: fromResponse.data,
+      to: toResponse.data
+    });
 
-      // Now search for flights using the destination IDs
-      const options = {
-        method: 'GET',
-        url: `${BOOKING_API_BASE_URL}/flights/searchFlights`,
-        params: {
-          fromId: fromDest.dest_id,
-          toId: toDest.dest_id,
-          departDate: departureDate,
-          returnDate: returnDate,
-          adults: adults.toString(),
-          children: '0,17',
-          currency_code: 'USD',
-          cabinClass: 'ECONOMY',
-          sort: 'BEST',
-          pageNo: '1',
-          stops: 'none'
-        },
-        headers: {
-          'x-rapidapi-key': config.BOOKING_API_KEY,
-          'x-rapidapi-host': 'booking-com15.p.rapidapi.com'
-        }
-      };
-
-      console.log('Making flight search request with params:', {
-        fromId: fromDest.dest_id,
-        toId: toDest.dest_id,
-        departDate: departureDate,
-        returnDate: returnDate
-      });
-
-      const response = await axios.request(options);
-      
-      console.log('Flight search response:', response.data);
-      
-      if (!response.data) {
-        throw new Error('No data received from the API');
-      }
-
-      if (response.data.status === false) {
-        throw new Error(response.data.message?.[0] || 'Failed to search flights');
-      }
-
-      return response.data;
-    } catch (error) {
-      console.error('Flight search error:', error.message);
-      throw error;
+    if (!fromResponse.data?.data || fromResponse.data.data.length === 0) {
+      throw new Error(`No destinations found for ${fromCity}`);
     }
-  };
+
+    if (!toResponse.data?.data || toResponse.data.data.length === 0) {
+      throw new Error(`No destinations found for ${toCity}`);
+    }
+
+    const fromDest = fromResponse.data.data[0];
+    const toDest = toResponse.data.data[0];
+
+    console.log('Found destinations:', {
+      from: fromDest,
+      to: toDest
+    });
+
+    return {
+      fromId: fromDest.dest_id,
+      toId: toDest.dest_id,
+      fromDestination: fromDest,
+      toDestination: toDest
+    };
+  } catch (error) {
+    console.error('Error getting destination IDs:', error.message);
+    throw error;
+  }
+}
+
+// Function to search for flights using destination IDs
+export async function searchFlights(fromId, toId, departureDate, returnDate, adults = 1) {
+  console.log('Searching for flights with IDs:', { fromId, toId, departureDate, returnDate, adults });
+
+  try {
+    const options = {
+      method: 'GET',
+      url: `${BOOKING_API_BASE_URL}/flights/searchFlights`,
+      params: {
+        fromId: fromId,
+        toId: toId,
+        departDate: departureDate,
+        returnDate: returnDate,
+        adults: adults.toString(),
+        children: '0,17',
+        currency_code: 'USD',
+        cabinClass: 'ECONOMY',
+        sort: 'BEST',
+        pageNo: '1',
+        stops: 'none'
+      },
+      headers: {
+        'x-rapidapi-key': config.BOOKING_API_KEY,
+        'x-rapidapi-host': 'booking-com15.p.rapidapi.com'
+      }
+    };
+
+    console.log('Making flight search request with params:', {
+      fromId: fromId,
+      toId: toId,
+      departDate: departureDate,
+      returnDate: returnDate
+    });
+
+    const response = await axios.request(options);
+    
+    console.log('Flight search response:', response.data);
+    
+    if (!response.data) {
+      throw new Error('No data received from the API');
+    }
+
+    if (response.data.status === false) {
+      throw new Error(response.data.message?.[0] || 'Failed to search flights');
+    }
+
+    return response.data;
+  } catch (error) {
+    console.error('Flight search error:', error.message);
+    throw error;
+  }
 }
 
 // Search for hotels
