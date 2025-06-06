@@ -21,7 +21,7 @@ import {
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { searchFlights, searchHotels } from '../services/travelService';
+import { searchFlights, searchHotels, getDestinationId } from '../services/travelService';
 import axios from 'axios';
 import config from '../config';
 
@@ -47,6 +47,7 @@ function TravelSearch() {
   const [flightDeparture, setFlightDeparture] = useState(null);
   const [flightReturn, setFlightReturn] = useState(null);
   const [flights, setFlights] = useState([]);
+  
   // Autocomplete state for city suggestions
   const [fromCityOptions, setFromCityOptions] = useState([]);
   const [toCityOptions, setToCityOptions] = useState([]);
@@ -54,6 +55,10 @@ function TravelSearch() {
   const [selectedToCity, setSelectedToCity] = useState(null);
   const [fromCityLoading, setFromCityLoading] = useState(false);
   const [toCityLoading, setToCityLoading] = useState(false);
+
+  // Store destination IDs
+  const [fromCityId, setFromCityId] = useState(null);
+  const [toCityId, setToCityId] = useState(null);
 
   // Debounce helpers
   function useDebounce(value, delay) {
@@ -77,6 +82,16 @@ function TravelSearch() {
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
+  };
+
+  // Helper function to show city selection status
+  const getCitySelectionStatus = (cityId, selectedCity, inputValue) => {
+    if (cityId && selectedCity) {
+      return { isValid: true, message: `✓ ${selectedCity.city_name} selected` };
+    } else if (inputValue && inputValue.length > 0) {
+      return { isValid: false, message: 'Please select from dropdown' };
+    }
+    return { isValid: false, message: '' };
   };
 
   const handleHotelSearch = async () => {
@@ -116,10 +131,10 @@ function TravelSearch() {
         numRooms
       )();
       
-      console.log('Hotel search API response:', result); // Log the full response
+      console.log('Hotel search API response:', result);
       
       if (result.data && result.data.hotels) {
-        console.log('First hotel data:', result.data.hotels[0]); // Log the first hotel's data
+        console.log('First hotel data:', result.data.hotels[0]);
         setHotels(result.data.hotels);
       } else {
         setHotels([]);
@@ -133,93 +148,296 @@ function TravelSearch() {
     }
   };
 
-  const handleFlightSearch = async () => {
-    const fromCity = selectedFromCity?.city_name || departureCity;
-    const toCity = selectedToCity?.city_name || destinationCity;
-    if (!fromCity || !toCity) {
-      setError('Please enter both departure and destination cities');
-      return;
+  // Function to search cities using getDestinationId and return formatted options
+  const searchCities = async (query) => {
+    console.log('searchCities called with query:', query);
+    
+    if (!query || query.length < 2) {
+      console.log('Query too short, returning empty array');
+      return [];
     }
-    if (!flightDeparture || !flightReturn) {
-      setError('Please select departure and return dates');
-      return;
-    }
-
+    
     try {
-      setLoading(true);
-      setError(null);
+      console.log('Making API request to:', 'https://booking-com15.p.rapidapi.com/api/v1/flights/searchDestination');
+      console.log('API Key exists:', !!config.BOOKING_API_KEY);
+      console.log('Query params:', { query });
       
-      const result = await searchFlights(
-        fromCity,
-        toCity,
-        flightDeparture.toISOString().split('T')[0],
-        flightReturn.toISOString().split('T')[0],
-        1
-      )();
-      
-      console.log('Flight search result:', result); // Debug log
-      
-      if (result && result.data && result.data.itineraries) {
-        setFlights(result.data.itineraries);
-      } else if (result && result.data && result.data.flights) {
-        setFlights(result.data.flights);
+      const response = await axios.get('https://booking-com15.p.rapidapi.com/api/v1/flights/searchDestination', {
+        params: { query },
+        headers: {
+          'x-rapidapi-key': config.BOOKING_API_KEY,
+          'x-rapidapi-host': 'booking-com15.p.rapidapi.com',
+        },
+      });
+
+      console.log('API Response status:', response.status);
+      console.log('API Response data:', response.data);
+
+      if (response.data?.data) {
+        const filteredData = response.data.data
+          .filter(item => {
+            // Check for the actual API structure: cityName and id
+            const isValid = (item.cityName || item.city_name) && (item.id || item.dest_id);
+            if (!isValid) {
+              console.log('Filtered out invalid item:', item);
+            }
+            return isValid;
+          })
+          .map(item => ({
+            // Map to consistent structure, handling both possible formats
+            city_name: item.cityName || item.city_name,
+            country_name: item.countryName || item.country_name,
+            dest_id: item.id || item.dest_id,
+            label: `${item.cityName || item.city_name}${(item.countryName || item.country_name) ? ', ' + (item.countryName || item.country_name) : ''}`,
+            type: item.type,
+            // Store original data for debugging
+            original: item
+          }));
+        
+        console.log('Processed cities:', filteredData);
+        return filteredData;
       } else {
-        setFlights([]);
-        setError('No flights found for the selected criteria.');
+        console.log('No data in response:', response.data);
+        return [];
       }
-      setLoading(false);
-    } catch (err) {
-      console.error('Error searching flights:', err);
-      setError('Failed to search flights. Please try again.');
-      setLoading(false);
+    } catch (error) {
+      console.error('Error searching cities - Full error:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      console.error('Error headers:', error.response?.headers);
+      return [];
     }
   };
 
-  // Fetch city suggestions for 'From (City)'
+  // Search for departure cities
   useEffect(() => {
+    console.log('FROM city effect triggered:', { 
+      debouncedDepartureCity, 
+      length: debouncedDepartureCity?.length 
+    });
+    
     if (!debouncedDepartureCity || debouncedDepartureCity.length < 2) {
+      console.log('FROM city: clearing options - query too short');
       setFromCityOptions([]);
       return;
     }
+    
+    console.log('FROM city: starting search for:', debouncedDepartureCity);
     setFromCityLoading(true);
-    axios.get('https://booking-com15.p.rapidapi.com/api/v1/flights/searchDestination', {
-      params: { query: debouncedDepartureCity },
-      headers: {
-        'x-rapidapi-key': config.BOOKING_API_KEY,
-        'x-rapidapi-host': 'booking-com15.p.rapidapi.com',
-      },
-    })
-      .then(res => {
-        console.log('API response for city autocomplete:', res.data);
-        const options = (res.data?.data || []).filter(item => item.type === 'city' && item.city_name).map(item => item);
+    
+    searchCities(debouncedDepartureCity)
+      .then(options => {
+        console.log('FROM city search completed:', options);
         setFromCityOptions(options);
       })
-      .catch(() => setFromCityOptions([]))
-      .finally(() => setFromCityLoading(false));
+      .catch(error => {
+        console.error('FROM city search error:', error);
+        setFromCityOptions([]);
+      })
+      .finally(() => {
+        console.log('FROM city search finished');
+        setFromCityLoading(false);
+      });
   }, [debouncedDepartureCity]);
 
-  // Fetch city suggestions for 'To (City)'
+  // Search for destination cities  
   useEffect(() => {
+    console.log('TO city effect triggered:', { 
+      debouncedDestinationCity, 
+      length: debouncedDestinationCity?.length 
+    });
+    
     if (!debouncedDestinationCity || debouncedDestinationCity.length < 2) {
+      console.log('TO city: clearing options - query too short');
       setToCityOptions([]);
       return;
     }
+    
+    console.log('TO city: starting search for:', debouncedDestinationCity);
     setToCityLoading(true);
-    axios.get('https://booking-com15.p.rapidapi.com/api/v1/flights/searchDestination', {
-      params: { query: debouncedDestinationCity },
-      headers: {
-        'x-rapidapi-key': config.BOOKING_API_KEY,
-        'x-rapidapi-host': 'booking-com15.p.rapidapi.com',
-      },
-    })
-      .then(res => {
-        console.log('API response for city autocomplete:', res.data);
-        const options = (res.data?.data || []).filter(item => item.type === 'city' && item.city_name).map(item => item);
+    
+    searchCities(debouncedDestinationCity)
+      .then(options => {
+        console.log('TO city search completed:', options);
         setToCityOptions(options);
       })
-      .catch(() => setToCityOptions([]))
-      .finally(() => setToCityLoading(false));
+      .catch(error => {
+        console.error('TO city search error:', error);
+        setToCityOptions([]);
+      })
+      .finally(() => {
+        console.log('TO city search finished');
+        setToCityLoading(false);
+      });
   }, [debouncedDestinationCity]);
+
+  // Enhanced flight search function using stored IDs
+  const handleFlightSearch = async () => {
+    console.log('Flight search initiated with:', {
+      fromCityId,
+      toCityId,
+      selectedFromCity,
+      selectedToCity,
+      departureCity,
+      destinationCity
+    });
+
+    // Validate that we have both city IDs
+    if (!fromCityId || !selectedFromCity) {
+      setError(`Please select a valid departure city from the dropdown suggestions. Current input: "${departureCity}"`);
+      return;
+    }
+    
+    if (!toCityId || !selectedToCity) {
+      setError(`Please select a valid destination city from the dropdown suggestions. Current input: "${destinationCity}"`);
+      return;
+    }
+
+    if (!flightDeparture) {
+      setError('Please select departure date');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    
+    try {
+      console.log('Searching flights with validated IDs:', {
+        fromId: fromCityId,
+        toId: toCityId,
+        fromCity: selectedFromCity.city_name,
+        toCity: selectedToCity.city_name,
+        departure: flightDeparture.toISOString().split('T')[0],
+        return: flightReturn ? flightReturn.toISOString().split('T')[0] : undefined,
+        adults: numAdults
+      });
+
+      const result = await searchFlights(
+        fromCityId,
+        toCityId,
+        flightDeparture.toISOString().split('T')[0],
+        flightReturn ? flightReturn.toISOString().split('T')[0] : undefined,
+        numAdults
+      );
+      
+      console.log('Flight search result:', result);
+      
+      // Handle the actual API response structure
+      if (result?.data?.flightOffers && result.data.flightOffers.length > 0) {
+        console.log('First flight offer structure:', JSON.stringify(result.data.flightOffers[0], null, 2));
+        
+        const processedFlights = result.data.flightOffers.map((offer, index) => {
+          console.log(`Processing flight offer ${index}:`, offer);
+          
+          const segments = offer.segments || [];
+          console.log(`Flight ${index} segments:`, segments);
+          
+          const firstSegment = segments[0] || {};
+          const lastSegment = segments[segments.length - 1] || {};
+          
+          console.log(`First segment:`, firstSegment);
+          console.log(`Last segment:`, lastSegment);
+          
+          // Try multiple ways to extract price
+          let price = 'N/A';
+          if (offer.priceBreakdown?.total?.units) {
+            price = offer.priceBreakdown.total.units;
+          } else if (offer.travellerPrices?.[0]?.price?.units) {
+            price = offer.travellerPrices[0].price.units;
+          } else if (offer.price?.units) {
+            price = offer.price.units;
+          } else if (offer.totalPrice?.units) {
+            price = offer.totalPrice.units;
+          }
+          
+          console.log(`Extracted price for flight ${index}:`, price);
+          
+          // Try multiple ways to extract airline
+          let airline = 'Unknown Airline';
+          if (firstSegment.marketingCarrier?.name) {
+            airline = firstSegment.marketingCarrier.name;
+          } else if (firstSegment.operatingCarrier?.name) {
+            airline = firstSegment.operatingCarrier.name;
+          } else if (firstSegment.airline?.name) {
+            airline = firstSegment.airline.name;
+          } else if (firstSegment.carrier?.name) {
+            airline = firstSegment.carrier.name;
+          }
+          
+          console.log(`Extracted airline for flight ${index}:`, airline);
+          
+          // Try multiple ways to extract times
+          let departureTime = 'N/A';
+          let arrivalTime = 'N/A';
+          
+          if (firstSegment.departure?.time) {
+            departureTime = firstSegment.departure.time;
+          } else if (firstSegment.departureTime) {
+            departureTime = firstSegment.departureTime;
+          }
+          
+          if (lastSegment.arrival?.time) {
+            arrivalTime = lastSegment.arrival.time;
+          } else if (lastSegment.arrivalTime) {
+            arrivalTime = lastSegment.arrivalTime;
+          }
+          
+          console.log(`Times for flight ${index}:`, { departureTime, arrivalTime });
+          
+          // Try to extract duration
+          let duration = 'N/A';
+          if (offer.totalDuration) {
+            duration = offer.totalDuration;
+          } else if (offer.duration) {
+            duration = offer.duration;
+          }
+          
+          console.log(`Duration for flight ${index}:`, duration);
+          
+          return {
+            airline: airline,
+            departure_time: departureTime,
+            arrival_time: arrivalTime,
+            duration: duration,
+            price: price,
+            stops: segments.length - 1,
+            booking_url: offer.bookingUrl || '#',
+            token: offer.token,
+            segments: segments.map(segment => ({
+              airline: segment.marketingCarrier?.name || 
+                      segment.operatingCarrier?.name || 
+                      segment.airline?.name || 
+                      segment.carrier?.name,
+              flight_number: segment.flightNumber || segment.flight_number,
+              departure: {
+                airport: segment.departure?.airportCode || segment.departure?.airport,
+                time: segment.departure?.time || segment.departureTime,
+                city: segment.departure?.cityName || segment.departure?.city
+              },
+              arrival: {
+                airport: segment.arrival?.airportCode || segment.arrival?.airport,
+                time: segment.arrival?.time || segment.arrivalTime,
+                city: segment.arrival?.cityName || segment.arrival?.city
+              },
+              duration: segment.duration
+            }))
+          };
+        });
+        
+        console.log('Processed flights:', processedFlights);
+        setFlights(processedFlights);
+      } else {
+        console.log('No flight offers found in response');
+        setFlights([]);
+        setError('No flights found for the selected criteria.');
+      }
+    } catch (err) {
+      console.error('Error searching flights:', err);
+      setError(err.message || 'Failed to search flights. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const renderHotelCard = (hotel) => {
     console.log('Rendering hotel card with data:', hotel);
@@ -308,54 +526,87 @@ function TravelSearch() {
   };
 
   const renderFlightCard = (flight) => {
-    // Handle different API response structures
-    const airline = flight.airline || flight.carrier?.name || 'Flight';
-    const departureTime = flight.departure_time || flight.departure?.time || 'N/A';
-    const arrivalTime = flight.arrival_time || flight.arrival?.time || 'N/A';
-    const duration = flight.duration || flight.flight_time || 'N/A';
-    const price = flight.price?.total_amount || flight.price || 'N/A';
-    const bookingUrl = flight.booking_url || flight.url || '#';
-
     return (
       <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
-            {airline}
+            {flight.airline}
           </Typography>
+          
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
             <Box>
               <Typography variant="subtitle2" color="text.secondary">
-                From
+                Departure
               </Typography>
               <Typography variant="body1">
-                {departureTime}
+                {flight.departure_time}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {flight.segments[0]?.departure?.airport}
               </Typography>
             </Box>
             <Box>
               <Typography variant="subtitle2" color="text.secondary">
-                To
+                Arrival
               </Typography>
               <Typography variant="body1">
-                {arrivalTime}
+                {flight.arrival_time}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {flight.segments[flight.segments.length - 1]?.arrival?.airport}
               </Typography>
             </Box>
           </Box>
-          <Typography variant="body2" color="text.secondary" paragraph>
-            Duration: {duration}
-          </Typography>
+
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Duration: {flight.duration}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Stops: {flight.stops}
+            </Typography>
+          </Box>
+
           <Box sx={{ mt: 2 }}>
             <Chip
-              label={`Price: $${price}`}
+              label={`Price: $${flight.price}`}
               color="primary"
               size="small"
+              sx={{ mr: 1 }}
             />
+            {flight.stops > 0 && (
+              <Chip
+                label={`${flight.stops} Stop${flight.stops > 1 ? 's' : ''}`}
+                color="secondary"
+                size="small"
+              />
+            )}
           </Box>
+
+          {flight.segments.length > 1 && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                Flight Details:
+              </Typography>
+              {flight.segments.map((segment, index) => (
+                <Box key={index} sx={{ mb: 1 }}>
+                  <Typography variant="caption" display="block">
+                    {segment.airline} {segment.flight_number}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    {segment.departure.time} - {segment.arrival.time}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          )}
+
           <Button
             variant="contained"
             color="primary"
             fullWidth
             sx={{ mt: 2 }}
-            href={bookingUrl}
+            href={flight.booking_url}
             target="_blank"
           >
             Book Flight
@@ -463,17 +714,78 @@ function TravelSearch() {
                   <Autocomplete
                     freeSolo={false}
                     options={fromCityOptions}
-                    getOptionLabel={option => option.city_name || ''}
+                    getOptionLabel={option =>
+                      option && typeof option === 'object'
+                        ? option.label || option.city_name || ''
+                        : ''
+                    }
                     inputValue={departureCity}
                     value={selectedFromCity}
                     loading={fromCityLoading}
-                    onInputChange={(event, newInputValue) => setDepartureCity(newInputValue)}
+                    onInputChange={(event, newInputValue, reason) => {
+                      console.log('FROM input change:', { newInputValue, reason, event });
+                      
+                      if (reason === 'input') {
+                        console.log('Setting departure city to:', newInputValue);
+                        setDepartureCity(newInputValue);
+                        // Clear the selected city and ID when user starts typing
+                        if (selectedFromCity) {
+                          setSelectedFromCity(null);
+                          setFromCityId(null);
+                          console.log('FROM city selection cleared due to manual input');
+                        }
+                      } else if (reason === 'clear') {
+                        console.log('Clearing FROM city input');
+                        setDepartureCity('');
+                        setSelectedFromCity(null);
+                        setFromCityId(null);
+                      }
+                    }}
                     onChange={(event, newValue) => {
+                      console.log('FROM city selected:', newValue);
                       setSelectedFromCity(newValue);
-                      setDepartureCity(newValue ? newValue.city_name : '');
+                      
+                      if (newValue && typeof newValue === 'object') {
+                        // User selected a city from dropdown
+                        setDepartureCity(newValue.label || newValue.city_name || '');
+                        setFromCityId(newValue.dest_id);
+                        console.log('FROM city ID saved:', newValue.dest_id);
+                      } else {
+                        // User cleared the selection or typed custom text
+                        setDepartureCity('');
+                        setFromCityId(null);
+                        console.log('FROM city ID cleared');
+                      }
                     }}
                     renderInput={(params) => (
-                      <TextField {...params} label="From (City)" fullWidth placeholder="Enter departure city" sx={{ mb: 2 }} />
+                      <TextField 
+                        {...params} 
+                        label="From (City)" 
+                        fullWidth 
+                        placeholder="Enter departure city" 
+                        sx={{ mb: 2 }}
+                        helperText={getCitySelectionStatus(fromCityId, selectedFromCity, departureCity).message}
+                        error={!getCitySelectionStatus(fromCityId, selectedFromCity, departureCity).isValid && departureCity.length > 0}
+                        InputProps={{
+                          ...params.InputProps,
+                          endAdornment: (
+                            <>
+                              {fromCityLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                              {params.InputProps.endAdornment}
+                            </>
+                          ),
+                        }}
+                      />
+                    )}
+                    renderOption={(props, option) => (
+                      <li {...props} key={option.dest_id || option.label || option.city_name}>
+                        <Box>
+                          <Typography variant="body1">{option.city_name}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {option.country_name}
+                          </Typography>
+                        </Box>
+                      </li>
                     )}
                   />
                 </Grid>
@@ -481,17 +793,78 @@ function TravelSearch() {
                   <Autocomplete
                     freeSolo={false}
                     options={toCityOptions}
-                    getOptionLabel={option => option.city_name || ''}
+                    getOptionLabel={option =>
+                      option && typeof option === 'object'
+                        ? option.label || option.city_name || ''
+                        : ''
+                    }
                     inputValue={destinationCity}
                     value={selectedToCity}
                     loading={toCityLoading}
-                    onInputChange={(event, newInputValue) => setDestinationCity(newInputValue)}
+                    onInputChange={(event, newInputValue, reason) => {
+                      console.log('TO input change:', { newInputValue, reason, event });
+                      
+                      if (reason === 'input') {
+                        console.log('Setting destination city to:', newInputValue);
+                        setDestinationCity(newInputValue);
+                        // Clear the selected city and ID when user starts typing
+                        if (selectedToCity) {
+                          setSelectedToCity(null);
+                          setToCityId(null);
+                          console.log('TO city selection cleared due to manual input');
+                        }
+                      } else if (reason === 'clear') {
+                        console.log('Clearing TO city input');
+                        setDestinationCity('');
+                        setSelectedToCity(null);
+                        setToCityId(null);
+                      }
+                    }}
                     onChange={(event, newValue) => {
+                      console.log('TO city selected:', newValue);
                       setSelectedToCity(newValue);
-                      setDestinationCity(newValue ? newValue.city_name : '');
+                      
+                      if (newValue && typeof newValue === 'object') {
+                        // User selected a city from dropdown
+                        setDestinationCity(newValue.label || newValue.city_name || '');
+                        setToCityId(newValue.dest_id);
+                        console.log('TO city ID saved:', newValue.dest_id);
+                      } else {
+                        // User cleared the selection or typed custom text
+                        setDestinationCity('');
+                        setToCityId(null);
+                        console.log('TO city ID cleared');
+                      }
                     }}
                     renderInput={(params) => (
-                      <TextField {...params} label="To (City)" fullWidth placeholder="Enter destination city" sx={{ mb: 2 }} />
+                      <TextField 
+                        {...params} 
+                        label="To (City)" 
+                        fullWidth 
+                        placeholder="Enter destination city" 
+                        sx={{ mb: 2 }}
+                        helperText={getCitySelectionStatus(toCityId, selectedToCity, destinationCity).message}
+                        error={!getCitySelectionStatus(toCityId, selectedToCity, destinationCity).isValid && destinationCity.length > 0}
+                        InputProps={{
+                          ...params.InputProps,
+                          endAdornment: (
+                            <>
+                              {toCityLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                              {params.InputProps.endAdornment}
+                            </>
+                          ),
+                        }}
+                      />
+                    )}
+                    renderOption={(props, option) => (
+                      <li {...props} key={option.dest_id || option.label || option.city_name}>
+                        <Box>
+                          <Typography variant="body1">{option.city_name}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {option.country_name}
+                          </Typography>
+                        </Box>
+                      </li>
                     )}
                   />
                 </Grid>
@@ -560,4 +933,4 @@ function TravelSearch() {
   );
 }
 
-export default TravelSearch; 
+export default TravelSearch;
