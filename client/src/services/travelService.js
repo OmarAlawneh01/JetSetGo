@@ -92,7 +92,10 @@ export async function searchFlights(fromId, toId, departureDate, returnDate, adu
         cabinClass: 'ECONOMY',
         sort: 'BEST',
         pageNo: '1',
-        stops: 'none'
+        stops: 'none',
+        include_booking_url: 'true',
+        include_airline_info: 'true',
+        include_flight_details: 'true'
       },
       headers: {
         'x-rapidapi-key': config.BOOKING_API_KEY,
@@ -117,6 +120,51 @@ export async function searchFlights(fromId, toId, departureDate, returnDate, adu
 
     if (response.data.status === false) {
       throw new Error(response.data.message?.[0] || 'Failed to search flights');
+    }
+
+    // Process the flight data to ensure all required fields are present
+    if (response.data.data?.flightOffers) {
+      response.data.data.flightOffers = response.data.data.flightOffers.map(offer => {
+        // Ensure we have the required fields
+        const processedOffer = {
+          ...offer,
+          price: {
+            total: offer.price?.total || offer.priceBreakdown?.total?.units || 'N/A',
+            currency: offer.price?.currency || 'USD'
+          },
+          itineraries: offer.itineraries?.map(itinerary => ({
+            ...itinerary,
+            segments: itinerary.segments?.map(segment => ({
+              ...segment,
+              carrier: {
+                name: segment.carrier?.name || segment.marketingCarrier?.name || 'Unknown Airline',
+                code: segment.carrier?.code || segment.marketingCarrier?.code
+              },
+              departure: {
+                ...segment.departure,
+                at: segment.departure?.at || segment.departure?.time,
+                iataCode: segment.departure?.iataCode || segment.departure?.airportCode,
+                cityName: segment.departure?.cityName || segment.departure?.city
+              },
+              arrival: {
+                ...segment.arrival,
+                at: segment.arrival?.at || segment.arrival?.time,
+                iataCode: segment.arrival?.iataCode || segment.arrival?.airportCode,
+                cityName: segment.arrival?.cityName || segment.arrival?.city
+              },
+              number: segment.number || segment.flightNumber,
+              duration: segment.duration || 'N/A'
+            }))
+          }))
+        };
+
+        // Ensure booking URL is present
+        if (!processedOffer.bookingUrl) {
+          processedOffer.bookingUrl = `https://www.booking.com/flights/results.html?from=${fromId}&to=${toId}&depart=${departureDate}&return=${returnDate || ''}&adults=${adults}`;
+        }
+
+        return processedOffer;
+      });
     }
 
     return response.data;
