@@ -325,105 +325,115 @@ function TravelSearch() {
       // Handle the actual API response structure
       if (result?.data?.flightOffers && result.data.flightOffers.length > 0) {
         console.log('First flight offer structure:', JSON.stringify(result.data.flightOffers[0], null, 2));
-        
         const processedFlights = result.data.flightOffers.map((offer, index) => {
           console.log(`Processing flight offer ${index}:`, offer);
-          
           const segments = offer.segments || [];
           console.log(`Flight ${index} segments:`, segments);
-          
-          const firstSegment = segments[0] || {};
-          const lastSegment = segments[segments.length - 1] || {};
-          
-          console.log(`First segment:`, firstSegment);
-          console.log(`Last segment:`, lastSegment);
-          
-          // Try multiple ways to extract price
-          let price = 'N/A';
-          if (offer.priceBreakdown?.total?.units) {
-            price = offer.priceBreakdown.total.units;
-          } else if (offer.travellerPrices?.[0]?.price?.units) {
-            price = offer.travellerPrices[0].price.units;
-          } else if (offer.price?.units) {
-            price = offer.price.units;
-          } else if (offer.totalPrice?.units) {
-            price = offer.totalPrice.units;
-          }
-          
-          console.log(`Extracted price for flight ${index}:`, price);
-          
-          // Try multiple ways to extract airline
-          let airline = 'Unknown Airline';
-          if (firstSegment.marketingCarrier?.name) {
-            airline = firstSegment.marketingCarrier.name;
-          } else if (firstSegment.operatingCarrier?.name) {
-            airline = firstSegment.operatingCarrier.name;
-          } else if (firstSegment.airline?.name) {
-            airline = firstSegment.airline.name;
-          } else if (firstSegment.carrier?.name) {
-            airline = firstSegment.carrier.name;
-          }
-          
-          console.log(`Extracted airline for flight ${index}:`, airline);
-          
-          // Try multiple ways to extract times
-          let departureTime = 'N/A';
-          let arrivalTime = 'N/A';
-          
-          if (firstSegment.departure?.time) {
-            departureTime = firstSegment.departure.time;
-          } else if (firstSegment.departureTime) {
-            departureTime = firstSegment.departureTime;
-          }
-          
-          if (lastSegment.arrival?.time) {
-            arrivalTime = lastSegment.arrival.time;
-          } else if (lastSegment.arrivalTime) {
-            arrivalTime = lastSegment.arrivalTime;
-          }
-          
-          console.log(`Times for flight ${index}:`, { departureTime, arrivalTime });
-          
-          // Try to extract duration
+
+          // Defensive: skip if no segments
+          if (!segments.length) return null;
+
+          // First and last segment for overall info
+          const firstSegment = segments[0];
+          const lastSegment = segments[segments.length - 1];
+
+          // Departure/arrival info
+          const departureTime = firstSegment.departureTime || 'N/A';
+          const arrivalTime = lastSegment.arrivalTime || 'N/A';
+          const departureAirport = firstSegment.departureAirport?.code || 'N/A';
+          const departureCity = firstSegment.departureAirport?.cityName || firstSegment.departureAirport?.city || 'N/A';
+          const arrivalAirport = lastSegment.arrivalAirport?.code || 'N/A';
+          const arrivalCity = lastSegment.arrivalAirport?.cityName || lastSegment.arrivalAirport?.city || 'N/A';
+
+          // Price
+          let price = offer.priceBreakdown?.total?.units || (offer.travellerPrices?.[0]?.price?.units) || offer.price || 'N/A';
+
+          // Duration (sum of all segment totalTime)
+          let totalSeconds = 0;
+          segments.forEach(seg => { totalSeconds += seg.totalTime || 0; });
           let duration = 'N/A';
-          if (offer.totalDuration) {
-            duration = offer.totalDuration;
-          } else if (offer.duration) {
-            duration = offer.duration;
+          if (totalSeconds > 0) {
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            duration = `${hours}h ${minutes}m`;
           }
-          
-          console.log(`Duration for flight ${index}:`, duration);
-          
-          return {
-            airline: airline,
-            departure_time: departureTime,
-            arrival_time: arrivalTime,
-            duration: duration,
-            price: price,
-            stops: segments.length - 1,
-            booking_url: offer.bookingUrl || '#',
-            token: offer.token,
-            segments: segments.map(segment => ({
-              airline: segment.marketingCarrier?.name || 
-                      segment.operatingCarrier?.name || 
-                      segment.airline?.name || 
-                      segment.carrier?.name,
-              flight_number: segment.flightNumber || segment.flight_number,
+
+          // Stops
+          const stops = segments.length - 1;
+
+          // Airline: get from first leg's carriersData if available
+          let airline = 'Unknown Airline';
+          let airlineLogo = '';
+          let flightNumber = '';
+          if (firstSegment.legs && firstSegment.legs.length > 0) {
+            const leg = firstSegment.legs[0];
+            if (leg.carriersData && leg.carriersData.length > 0) {
+              airline = leg.carriersData[0].name || 'Unknown Airline';
+              airlineLogo = leg.carriersData[0].logo || '';
+            }
+            if (leg.flightInfo?.flightNumber) {
+              flightNumber = leg.flightInfo.flightNumber;
+            }
+          }
+
+          // Build segments details for display
+          const processedSegments = segments.map((seg, i) => {
+            let segAirline = 'Unknown Airline';
+            let segFlightNumber = '';
+            let segLogo = '';
+            if (seg.legs && seg.legs.length > 0) {
+              const leg = seg.legs[0];
+              if (leg.carriersData && leg.carriersData.length > 0) {
+                segAirline = leg.carriersData[0].name || 'Unknown Airline';
+                segLogo = leg.carriersData[0].logo || '';
+              }
+              if (leg.flightInfo?.flightNumber) {
+                segFlightNumber = leg.flightInfo.flightNumber;
+              }
+            }
+            // Segment duration
+            let segDuration = 'N/A';
+            if (seg.totalTime) {
+              const h = Math.floor(seg.totalTime / 3600);
+              const m = Math.floor((seg.totalTime % 3600) / 60);
+              segDuration = `${h}h ${m}m`;
+            }
+            return {
+              airline: segAirline,
+              airlineLogo: segLogo,
+              flight_number: segFlightNumber,
               departure: {
-                airport: segment.departure?.airportCode || segment.departure?.airport,
-                time: segment.departure?.time || segment.departureTime,
-                city: segment.departure?.cityName || segment.departure?.city
+                airport: seg.departureAirport?.code || '',
+                time: seg.departureTime || '',
+                city: seg.departureAirport?.cityName || seg.departureAirport?.city || ''
               },
               arrival: {
-                airport: segment.arrival?.airportCode || segment.arrival?.airport,
-                time: segment.arrival?.time || segment.arrivalTime,
-                city: segment.arrival?.cityName || segment.arrival?.city
+                airport: seg.arrivalAirport?.code || '',
+                time: seg.arrivalTime || '',
+                city: seg.arrivalAirport?.cityName || seg.arrivalAirport?.city || ''
               },
-              duration: segment.duration
-            }))
+              duration: segDuration
+            };
+          });
+
+          return {
+            airline,
+            airlineLogo,
+            flight_number: flightNumber,
+            departure_time: departureTime,
+            arrival_time: arrivalTime,
+            departure_airport: departureAirport,
+            departure_city: departureCity,
+            arrival_airport: arrivalAirport,
+            arrival_city: arrivalCity,
+            duration,
+            price,
+            stops,
+            booking_url: offer.bookingUrl || '#',
+            token: offer.token,
+            segments: processedSegments
           };
-        });
-        
+        }).filter(f => f !== null); // Remove nulls
         console.log('Processed flights:', processedFlights);
         setFlights(processedFlights);
       } else {
@@ -526,75 +536,138 @@ function TravelSearch() {
   };
 
   const renderFlightCard = (flight) => {
+    // Format the price with commas and currency symbol
+    const formattedPrice = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(flight.price);
+
+    // Format the dates to be more readable
+    const formatDateTime = (dateTimeStr) => {
+      if (!dateTimeStr || dateTimeStr === 'N/A') return 'N/A';
+      const date = new Date(dateTimeStr);
+      return date.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    };
+
+    // Format duration from ISO format (e.g., "PT2H30M" to "2h 30m")
+    const formatDuration = (duration) => {
+      if (!duration || duration === 'N/A') return 'N/A';
+      if (duration.includes('PT')) {
+        const hours = duration.match(/(\d+)H/)?.[1] || '0';
+        const minutes = duration.match(/(\d+)M/)?.[1] || '0';
+        return `${hours}h ${minutes}m`;
+      }
+      return duration;
+    };
+
     return (
       <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <CardContent>
-          <Typography variant="h6" gutterBottom>
-            {flight.airline}
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6" gutterBottom>
+              {flight.airline}
+            </Typography>
+            <Chip
+              label={formattedPrice}
+              color="primary"
+              size="small"
+            />
+          </Box>
           
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
             <Box>
               <Typography variant="subtitle2" color="text.secondary">
                 Departure
               </Typography>
-              <Typography variant="body1">
-                {flight.departure_time}
+              <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
+                {formatDateTime(flight.departure_time)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {flight.segments[0]?.departure?.airport}
+                {flight.segments[0]?.departure?.airport} ({flight.segments[0]?.departure?.city})
               </Typography>
             </Box>
-            <Box>
+            <Box sx={{ textAlign: 'center', mx: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                {formatDuration(flight.duration)}
+              </Typography>
+              <Box sx={{ 
+                width: '100px', 
+                height: '2px', 
+                bgcolor: 'primary.main',
+                position: 'relative',
+                '&::before': {
+                  content: '""',
+                  position: 'absolute',
+                  right: 0,
+                  top: '-4px',
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  bgcolor: 'primary.main'
+                }
+              }} />
+            </Box>
+            <Box sx={{ textAlign: 'right' }}>
               <Typography variant="subtitle2" color="text.secondary">
                 Arrival
               </Typography>
-              <Typography variant="body1">
-                {flight.arrival_time}
+              <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
+                {formatDateTime(flight.arrival_time)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {flight.segments[flight.segments.length - 1]?.arrival?.airport}
+                {flight.segments[flight.segments.length - 1]?.arrival?.airport} ({flight.segments[flight.segments.length - 1]?.arrival?.city})
               </Typography>
             </Box>
           </Box>
 
           <Box sx={{ mb: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Duration: {flight.duration}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Stops: {flight.stops}
-            </Typography>
-          </Box>
-
-          <Box sx={{ mt: 2 }}>
             <Chip
-              label={`Price: $${flight.price}`}
-              color="primary"
+              label={`${flight.stops} Stop${flight.stops > 1 ? 's' : ''}`}
+              color="secondary"
               size="small"
               sx={{ mr: 1 }}
             />
-            {flight.stops > 0 && (
-              <Chip
-                label={`${flight.stops} Stop${flight.stops > 1 ? 's' : ''}`}
-                color="secondary"
-                size="small"
-              />
-            )}
+            <Chip
+              label={`Flight Duration: ${formatDuration(flight.duration)}`}
+              color="info"
+              size="small"
+            />
           </Box>
 
           {flight.segments.length > 1 && (
-            <Box sx={{ mt: 2 }}>
+            <Box sx={{ mt: 2, mb: 2 }}>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                 Flight Details:
               </Typography>
               {flight.segments.map((segment, index) => (
-                <Box key={index} sx={{ mb: 1 }}>
-                  <Typography variant="caption" display="block">
+                <Box 
+                  key={index} 
+                  sx={{ 
+                    mb: 1, 
+                    p: 1, 
+                    bgcolor: 'background.default',
+                    borderRadius: 1
+                  }}
+                >
+                  <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                     {segment.airline} {segment.flight_number}
                   </Typography>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {formatDateTime(segment.departure.time)} - {segment.departure.airport}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {formatDateTime(segment.arrival.time)} - {segment.arrival.airport}
+                    </Typography>
+                  </Box>
                   <Typography variant="caption" color="text.secondary" display="block">
-                    {segment.departure.time} - {segment.arrival.time}
+                    Duration: {formatDuration(segment.duration)}
                   </Typography>
                 </Box>
               ))}
@@ -608,6 +681,7 @@ function TravelSearch() {
             sx={{ mt: 2 }}
             href={flight.booking_url}
             target="_blank"
+            rel="noopener noreferrer"
           >
             Book Flight
           </Button>
