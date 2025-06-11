@@ -34,26 +34,6 @@ const userSchema = new mongoose.Schema({
         trim: true,
         maxlength: [500, 'Bio cannot be more than 500 characters'] // لا يمكن أن يتجاوز السيرة الذاتية 500 حرف
     },
-    preferences: {
-        travelStyle: [String], // أنماط السفر
-        budget: {
-            min: { type: Number, default: 0 }, // الحد الأدنى للميزانية
-            max: { type: Number, default: 10000 } // الحد الأقصى للميزانية
-        },
-        interests: [String], // الاهتمامات
-        dietaryRestrictions: [String], // القيود الغذائية
-        accessibility: [String] // إمكانية الوصول
-    },
-    travelHistory: [{
-        destination: String,
-        date: Date,
-        duration: Number,
-        activities: [String]
-    }],
-    savedDestinations: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Destination'
-    }],
     createdAt: {
         type: Date,
         default: Date.now
